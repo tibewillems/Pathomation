@@ -1,0 +1,46 @@
+﻿.aligned-text {
+    display: inline-block;
+    text-align: right;
+    width: 70px;
+}
+
+.annotation-helper-icon i,
+.annotation-helper-icon span {
+    display: none;
+}
+
+.annotation-helper-icon.loading i {
+    display: initial;
+}
+
+.annotation-helper-icon.loading span {
+    display: none;
+}
+
+.annotation-helper-icon.saved i,
+.annotation-helper-icon.saved span.text-danger {
+    display: none;
+}
+
+.annotation-helper-icon.saved span.text-success {
+    display: initial;
+}
+
+.annotation-helper-icon.error i,
+.annotation-helper-icon.error span.text-success {
+    display: none;
+}
+
+.annotation-helper-icon.error span.text-danger {
+    display: inline-block;
+}
+
+#annotations {
+}
+
+.btn-group {
+    padding: 0 5px;
+}
+.h-with-toolbar {
+    height: calc(100% - 35px)
+}
