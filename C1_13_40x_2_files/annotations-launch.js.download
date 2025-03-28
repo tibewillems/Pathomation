@@ -1,0 +1,432 @@
+﻿var annotationManager = null;
+var slideLoader = null;
+var gallery = null;
+var selectedImages = {};
+var context = new PMA.UI.Components.Context({ caller: "PMA.Host Launch" });
+var contextsDict = {};
+var contextDictInit = false;
+var saveTimeout = null;
+
+function findSlide(serverUrl, path) {
+    if (collection && collection.Slides && collection.Slides.length) {
+        for (var i = 0; i < collection.Slides.length; i++) {
+            if (collection.Slides[i].Path == path) {
+                return collection.Slides[i];
+            }
+        }
+    }
+
+    return null;
+}
+
+function getSlideCaption(serverUrl, path) {
+    var s = findSlide(serverUrl, path);
+    if (s) {
+        return s.Caption;
+    }
+
+    return path.split('/').pop();
+}
+
+var loaderOptions = {
+    overview: {
+        collapsed: true
+    },
+    channels: {
+        collapsed: false
+    },
+    barcode: {
+        collapsed: true,
+        rotation: 180
+    },
+    loadingBar: true,
+    annotations: {
+        visible: true,
+        showMeasurements: false,
+        labels: true,
+        imageBaseUrl: "https://host.pathomation.com/pma.view/Content/themes/base/Images/",
+        imageScale: 0.5,
+        contexts: null,
+        filter: function (x) {
+            if (x.Context == "" || !x.Context) {
+                return false;
+            }
+
+            if (!isInstructor && x.Context != "Instructor" && x.Context != annotationsContext) {
+                return false;
+            }
+
+            if (!contextDictInit) {
+                contextsDict[x.Context] = 1;
+            }
+
+            return true;
+        }
+    },
+    rotationControl: { collapsed: true },
+    digitalZoomLevels: 2,
+    scaleLine: true,
+    filename: function (o) {
+        return getSlideCaption(o.serverUrl, o.path);
+    }
+};
+
+function supportsColorPicker() {
+    var colorInput;
+    colorInput = $('<input type="color" value="!" />')[0];
+    return colorInput.type === 'color' && colorInput.value !== '!';
+}
+
+function renderContextCheckboxes(contextsDict) {
+    var html = '';
+    Object.keys(contextsDict).map(function (x) {
+        html += `<li>
+                    <a href="#" class="small dropdown-item" tabIndex="-1">
+                        <input checked type="checkbox" value="${x}" />&nbsp;${(x && x.split("-").length > 1) ? x.split("-")[1] : "Instructor"}
+                    </a>
+                </li>`;
+    });
+
+    if (html == '') {
+        html = `<li>(No annotations)</li>`;
+    }
+
+    $("#annotation-users").html(html);
+}
+
+$(document).ready(function () {
+    new PMA.UI.Authentication.SessionLogin(context, [{
+        serverUrl: pmaCoreUrl,
+        sessionId: sessionId
+    }]);
+
+    if (slidePath) {
+        slideLoader = new PMA.UI.Components.SlideLoader(context, $.extend({}, { element: "#viewer" }, loaderOptions));
+        slideLoader.load(pmaCoreUrl, slidePath);
+    }
+    else if (collection) {
+        gallery = new PMA.UI.Components.Gallery(context, {
+            element: "#gallery",
+            thumbnailWidth: 200,
+            thumbnailHeight: 140,
+            mode: "vertical",
+            showFileName: true,
+            multiSelect: true,
+            filenameCallback: getSlideCaption
+        });
+
+        var images = collection.Slides.map(c => { return { path: c.Path, rotation: 0 } });
+        gallery.loadSlides(pmaCoreUrl, images, function () {
+            gallery.selectSlide(0);
+        });
+
+        gallery.listen(PMA.UI.Components.Events.SlideSelected, onGallerySlideSelected);
+        gallery.listen(PMA.UI.Components.Events.SlideDeSelected, onGallerySlideDeSelected);
+    }
+
+    if (!isInstructor) {
+        $("#context-dropdown").addClass("d-none");
+    }
+
+    var jsColorPicker = null;
+    if (supportsColorPicker()) {
+        $("#color-picker-js").remove();
+        $("#color-picker-hidden").remove();
+    } else {
+        $("#color-picker-native").remove();
+        jsColorPicker = new jscolor($("#color-picker-js")[0], {
+            valueElement: $("#color-picker-hidden")[0],
+            hash: true,
+            closable: true,
+            closeText: "Close"
+        });
+    }
+
+    $("button.color-btn").click(function (e) {
+        var clr = $(this).data("color");
+        $("#color-picker-native").val(clr);
+        if (jsColorPicker) {
+            jsColorPicker.fromString(clr);
+        }
+    });
+
+    $("button[data-action][data-type], a[data-action][data-type]").click(function (e) {
+        e.preventDefault();
+        drawCommands($(this).data("action"), $(this).data("type"));
+    });
+
+    $("#annotation-users").on("click", "input[type=checkbox]", function () {
+        var contexts = [];
+
+        slideLoader.mainViewport.options.annotations.contexts = $("#annotation-users input[type=checkbox]:checked").each(function (idx, chk) {
+            contexts.push(chk.value);
+        });
+
+        if (contexts.length > 0 && contexts[0] == "null") {
+            contexts[0] = "";
+        }
+        if (contexts.length == 0) {
+            contexts = " ";
+        }
+
+        slideLoader.mainViewport.options.annotations.contexts = contexts;
+        slideLoader.reloadAnnotations(function () {
+        });
+    });
+
+    initSlideLoader();
+
+    $(document).resize(updateMapSizes);
+});
+
+function initSlideLoader() {
+    if (!slideLoader) {
+        return;
+    }
+
+    slideLoader.listen(PMA.UI.Components.Events.SlideLoaded, function (args) {
+        if (!isSlideOnlyMode) {
+            return;
+        }
+
+        $("button, input").removeAttr("disabled");
+        window.annotationManager = new PMA.UI.Components.Annotations({
+            context: window.context,
+            element: null,
+            viewport: slideLoader.mainViewport,
+            serverUrl: args.serverUrl,
+            path: args.path,
+            enabled: true
+        });
+
+        if (!contextDictInit) {
+            renderContextCheckboxes(contextsDict);
+            contextDictInit = true;
+        }
+
+        window.annotationManager.listen(PMA.UI.Components.Events.AnnotationsSelectionChanged, function (e) {
+            if (e) {
+                $("button[data-action='delete']").attr("disabled", false);
+
+                var metadata = e.hasOwnProperty("feature") ? e.feature.metaData : (e.hasOwnProperty("length") && e.length !== 0 ? e[0].metaData : null);
+                if (metadata) {
+                    $("#annotation-text").val(metadata.Notes);
+                    $("#txt-area").html(metadata.FormatedArea);
+                    $("#txt-length").html(metadata.FormatedLength);
+                } else {
+                    // $("#annotation-text").val("");
+                    $("button[data-action='delete']").attr("disabled", true);
+                    $("#txt-area").html(0);
+                    $("#txt-length").html(0);
+                }
+            }
+        });
+
+        window.annotationManager.listen(PMA.UI.Components.Events.AnnotationAdded, function (e) {
+            e.feature.metaData.Context = annotationsContext;
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(function () { saveAnnotations(e); }, 1000);
+        });
+
+        window.annotationManager.listen(PMA.UI.Components.Events.AnnotationDeleted, function (e) {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(function () { saveAnnotations(e); }, 1000);
+        });
+
+        window.annotationManager.listen(PMA.UI.Components.Events.AnnotationsSaved, function (e) {
+            if (e && e.success) {
+                $(".annotation-helper-icon").removeClass("loading").addClass("saved");
+            } else {
+                $(".annotation-helper-icon").removeClass("loading").addClass("error");
+            }
+
+            setTimeout(function () {
+                $(".annotation-helper-icon").removeClass("loading error saved");
+            }, 1000);
+
+            var labels = $("#chkLabels").parent().hasClass("active");
+            var measurements = $("#chkMeasurements").parent().hasClass("active");
+            slideLoader.mainViewport.showAnnotationsLabels(labels, measurements);
+        });
+    });
+
+    $("#annotations").on("focusout", "#annotation-text", function (e) {
+        if (window.annotationManager && window.annotationManager.getSelection().length !== 0) {
+            var sel = window.annotationManager.getSelection()[0];
+            if (sel.metaData) {
+                sel.metaData.Notes = $(this).val() ? $(this).val() : " ";
+                window.annotationManager.setMetadata(sel, sel.metaData);
+                window.annotationManager.saveAnnotations();
+                window.annotationManager.clearSelection();
+                var labels = $("#chkLabels").parent().hasClass("active");
+                var measurements = $("#chkMeasurements").parent().hasClass("active");
+                slideLoader.mainViewport.showAnnotationsLabels(labels, measurements);
+            }
+        }
+    });
+
+}
+
+function updateMapSizes() {
+    if (slideLoader && slideLoader.mainViewport && slideLoader.mainViewport.map) {
+        slideLoader.mainViewport.updateSize();
+    }
+
+    for (key in selectedImages) {
+        if (selectedImages.hasOwnProperty(key) && selectedImages[key].slideLoader.mainViewport) {
+            selectedImages[key].slideLoader.mainViewport.updateSize();
+        }
+    }
+};
+
+function onGallerySlideSelected(slide) {
+    var el = $("<div tabindex='0' class='viewer h-100 col px-0' data-path='" + slide.path + "'></div>").appendTo("#viewer-container")[0];
+    var options = $.extend({}, loaderOptions, { element: el });
+    var sl = new PMA.UI.Components.SlideLoader(context, options);
+    selectedImages[slide.path] = { slideLoader: sl };
+
+    reorderviewers();
+
+    var s = findSlide(slide.serverUrl, slide.path);
+    if (s) {
+        if (s.Position) {
+            sl.setOption("position", JSON.parse(s.Position));
+        }
+
+        sl.setOption("flip", { horizontally: s.FlipX, vertically: s.FlipY });
+    }
+
+    selectedImages[slide.path].slideLoader.load(pmaCoreUrl, slide.path);
+
+    updateMapSizes();
+}
+
+function onGallerySlideDeSelected(slide) {
+    var el = selectedImages[slide.path].slideLoader.getOption("element");
+    $(el).remove();
+    selectedImages[slide.path].slideLoader.load(null);
+    delete selectedImages[slide.path];
+
+    reorderviewers();
+    updateMapSizes();
+}
+
+function reorderviewers() {
+    if (!gallery) {
+        return;
+    }
+
+    var selection = gallery.getSelectedSlides();
+
+    var items = $("#viewer-container > div.viewer");
+    items.sort(function (a, b) {
+        var i1 = -1, i2 = -1;
+        var path1 = $(a).data("path"), path2 = $(b).data("path");
+        for (var i = 0; i < selection.length; i++) {
+            if (i1 != -1 && i2 != -1) {
+                break;
+            }
+
+            if (selection[i].path == path1) {
+                i1 = i;
+                continue;
+            }
+
+            if (selection[i].path == path2) {
+                i2 = i;
+                continue;
+            }
+        }
+
+        return i1 - i2;
+    });
+
+    $("#viewer-container").html(items);
+}
+
+function drawCommands(action, type) {
+    if (action) {
+        window.pointCounting = false;
+        // window.annotationManager.finishDrawing(false);
+        if (action == "draw") {
+            var size = undefined;
+            var color = $(".color-picker").val();
+            var bounds = undefined;
+            if (type == 'Rectangle' || type == 'Ellipse' || type == 'Circle') {
+                size = [4000, 8000];
+            }
+
+            var f = window.annotationManager.getSelection();
+
+            window.annotationManager.startDrawing({
+                type: type,
+                color: color,
+                //fillColor: "rgba(33,44,55,255)",
+                penWidth: 2,
+                iconRelativePath: null,
+                feature: type == "MultiPoint" && f.length > 0 ? f[0] : undefined,
+                notes: $("#annotation-text").val() ? $("#annotation-text").val() : " "
+            });
+        } else if (action == "edit") {
+            var f = window.annotationManager.getSelection();
+
+            window.annotationManager.startTool({
+                type: type,
+                brushType: 'square',
+                brushSize: 1000,
+                brushStep: 100,
+                drawMode: true,
+                iconRelativePath: null,
+                feature: window.annotationManager.getSelection()[0],
+                color: $(".color-picker").val(),
+                fillColor: "rgba(33,44,55, " + Math.random() + ")",
+                penWidth: Math.floor(Math.random() * 15) + 1,
+                iconRelativePath: null,
+                notes: $("#annotation-text").val() ? $("#annotation-text").val() : " "
+            });
+        } else if (action == "measure") {
+            if (type == "clear") {
+                slideLoader.mainViewport.stopMeasuring();
+                return;
+            }
+
+            slideLoader.mainViewport.startMeasuring(type);
+        } else if (action == "save") {
+            saveAnnotations();
+            // window.annotationManager.saveAnnotations();
+        } else if (action == "delete") {
+            var ann = window.annotationManager.getSelection();
+
+            if (ann && ann.length > 0) {
+                window.annotationManager.deleteAnnotation(ann[0].getId());
+            }
+        } else if (action == "deleteall") {
+            var allAnnotations = slideLoader.mainViewport.getAnnotations();
+
+            for (var i = 0; i < allAnnotations.length; i++) {
+                window.annotationManager.deleteAnnotation(allAnnotations[i].getId());
+            }
+        } else if (action === "merge") {
+            window.annotationManager.mergeSelection();
+        } else if (action === "union") {
+            window.annotationManager.booleanUnion(window.annotationManager.getSelection());
+        } else if (action === "difference") {
+            window.annotationManager.booleanDifference(window.annotationManager.getSelection()[0], window.annotationManager.getSelection()[1]);
+        } else if (action === "popout") {
+            openPopup();
+        }
+    }
+}
+
+function saveAnnotations(e) {
+    if (e) {
+        var metadata = e.hasOwnProperty("feature") ? e.feature.metaData : (e.hasOwnProperty("length") && e.length !== 0 ? e[0].metaData : null);
+        if (metadata) {
+            metadata.Notes = $("#annotation-text").val() ? $("#annotation-text").val() : " ";
+        }
+    }
+
+    // slideLoader.mainViewport.showAnnotationsLabels(true);
+    $(".annotation-helper-icon").addClass("loading");
+    window.annotationManager.saveAnnotations();
+}

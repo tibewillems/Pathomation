@@ -1,0 +1,82 @@
+﻿.nav-divider {
+    border-bottom: 1px #73818f solid;
+}
+
+.sidebar a.btn-new-collection {
+    font-size: 1.5em;
+    margin-top: -5px;
+    text-decoration: none;
+}
+
+table.dataTable tbody tr.selected {
+    background-color: rgba(0,0,0,.1);
+}
+
+    table.dataTable tbody tr.selected td {
+        background-color: transparent;
+        color: #23282c;
+    }
+
+    table.dataTable tbody tr.selected a, table.dataTable tbody th.selected a, table.dataTable tbody td.selected a {
+        color: #09b7f5;
+    }
+
+        table.dataTable tbody tr.selected a.btn-outline-danger {
+            color: #f86c6b;
+        }
+
+        table.dataTable tbody tr.selected a.btn:hover {
+            color: #fff;
+        }
+
+.modal-xl {
+    max-width: 90%;
+}
+
+.modal-viewer {
+    height: 500px;
+    width: 100%;
+}
+
+.card-header div.slide-caption {
+    float: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: calc(100% - 50px);
+}
+
+.slide-viewer {
+    flex-grow: 0;
+}
+
+.dz-message {
+    cursor: pointer;
+}
+
+.dz-preview {
+    float: left;
+    padding: 15px;
+    border: 1px solid #c8ced3;
+    border-radius: .25rem;
+    margin: 15px 15px 15px 0;
+}
+
+.dz-success-mark, .dz-error-mark, .dz-error-message {
+    display: none;
+}
+
+.dz-progress .dz-upload {
+    background-color: #63c2de !important;
+    transition: width .6s ease;
+    height: 4px;
+    display: block;
+}
+
+.dz-preview.dz-error.dz-complete {
+    border-color: #f86c6b !important;
+}
+
+.dz-preview.dz-success.dz-complete {
+    border-color: #4dbd74 !important;
+}
